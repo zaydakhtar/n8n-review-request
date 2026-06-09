@@ -1,1 +1,199 @@
-
+{
+  "name": "review-request",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "job-complete",
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "id": "a1000001-0001-0001-0001-000000000001",
+      "name": "Job Complete Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 400],
+      "webhookId": "job-complete-webhook",
+      "notes": "CONFIGURE: Set the webhook path (currently 'job-complete'). Expected JSON body: { customerName, customerEmail, jobType, businessName }"
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "hours"
+      },
+      "id": "b2000002-0002-0002-0002-000000000002",
+      "name": "Wait 2 Hours",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [480, 400],
+      "notes": "CONFIGURE: Adjust wait time to suit your business. Default is 2 hours after job completion."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.groq.com/openai/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"llama3-8b-8192\",\n  \"temperature\": 0.7,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"You are a friendly customer communication assistant for a UK small business. Write a short, warm, genuine review request email. It must feel personal, not automated. Keep it under 100 words. Do not use exclamation marks excessively. Do not mention competitors. End with a Google review link placeholder. Return ONLY the email body text, no subject line, no sign-off name.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"Write a review request email for a customer called {{ $json.body.customerName }} who just had a {{ $json.body.jobType }} completed by {{ $json.body.businessName }}. Ask them to leave a Google review.\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "id": "c3000003-0003-0003-0003-000000000003",
+      "name": "Generate Email with Groq",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GROQ_CREDENTIAL_ID",
+          "name": "Groq API Key"
+        }
+      },
+      "notes": "CONFIGURE: Create a Header Auth credential named 'Groq API Key'. Header: Authorization, Value: Bearer YOUR_GROQ_API_KEY"
+    },
+    {
+      "parameters": {
+        "jsCode": "const groqItem = $input.first().json;\nconst webhookData = $('Job Complete Webhook').first().json.body || {};\n\nlet emailBody = groqItem.choices?.[0]?.message?.content || '';\nemailBody = emailBody.trim();\n\nif (!emailBody) {\n  emailBody = `Hi ${webhookData.customerName || 'there'},\\n\\nThank you for choosing ${webhookData.businessName || 'us'} for your recent ${webhookData.jobType || 'service'}. We hope everything went smoothly.\\n\\nIf you have a moment, we would really appreciate it if you could leave us a Google review — it makes a huge difference to a small business.\\n\\n[GOOGLE_REVIEW_LINK]\\n\\nThank you so much.`;\n}\n\nreturn [\n  {\n    json: {\n      timestamp: new Date().toISOString(),\n      customerName: webhookData.customerName || '',\n      customerEmail: webhookData.customerEmail || '',\n      jobType: webhookData.jobType || '',\n      businessName: webhookData.businessName || '',\n      emailBody: emailBody,\n      emailSubject: `Thank you for choosing ${webhookData.businessName || 'us'} — quick favour`\n    }\n  }\n];"
+      },
+      "id": "d4000004-0004-0004-0004-000000000004",
+      "name": "Prepare Email Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [960, 400],
+      "notes": "Extracts Groq-generated email body, builds subject line, merges with customer data. Falls back to template if Groq fails."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.brevo.com/v3/smtp/email",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "api-key",
+              "value": "={{ $credentials.httpHeaderAuth.value }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"sender\": {\n    \"name\": \"{{ $json.businessName }}\",\n    \"email\": \"YOUR_SENDER_EMAIL\"\n  },\n  \"to\": [\n    {\n      \"email\": \"{{ $json.customerEmail }}\",\n      \"name\": \"{{ $json.customerName }}\"\n    }\n  ],\n  \"subject\": \"{{ $json.emailSubject }}\",\n  \"textContent\": \"{{ $json.emailBody }}\"\n}",
+        "options": {}
+      },
+      "id": "e5000005-0005-0005-0005-000000000005",
+      "name": "Send Email via Brevo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1200, 400],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "BREVO_CREDENTIAL_ID",
+          "name": "Brevo API Key"
+        }
+      },
+      "notes": "CONFIGURE: Create a Header Auth credential named 'Brevo API Key'. Replace YOUR_SENDER_EMAIL with your verified Brevo sender address."
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Review Requests",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Timestamp": "={{ $json.timestamp }}",
+            "Customer Name": "={{ $json.customerName }}",
+            "Customer Email": "={{ $json.customerEmail }}",
+            "Job Type": "={{ $json.jobType }}",
+            "Business Name": "={{ $json.businessName }}",
+            "Email Subject": "={{ $json.emailSubject }}",
+            "Status": "Sent"
+          }
+        },
+        "options": {}
+      },
+      "id": "f6000006-0006-0006-0006-000000000006",
+      "name": "Log to Google Sheets",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [1440, 400],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_SHEETS_CREDENTIAL_ID",
+          "name": "Google Sheets account"
+        }
+      },
+      "notes": "CONFIGURE: Set documentId to your Google Sheet ID. Tab must be named 'Review Requests' with columns: Timestamp, Customer Name, Customer Email, Job Type, Business Name, Email Subject, Status"
+    },
+    {
+      "parameters": {
+        "chatId": "TELEGRAM_CHAT_ID",
+        "text": "=⭐ *Review Request Sent*\n\n*Customer:* {{ $json.customerName }}\n*Email:* {{ $json.customerEmail }}\n*Job:* {{ $json.jobType }}\n*Business:* {{ $json.businessName }}\n*Sent at:* {{ $json.timestamp }}",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "07000007-0007-0007-0007-000000000007",
+      "name": "Telegram Confirmation",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1680, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Telegram account"
+        }
+      },
+      "notes": "CONFIGURE: Set chatId to your Telegram Chat ID."
+    }
+  ],
+  "connections": {
+    "Job Complete Webhook": {
+      "main": [[{ "node": "Wait 2 Hours", "type": "main", "index": 0 }]]
+    },
+    "Wait 2 Hours": {
+      "main": [[{ "node": "Generate Email with Groq", "type": "main", "index": 0 }]]
+    },
+    "Generate Email with Groq": {
+      "main": [[{ "node": "Prepare Email Content", "type": "main", "index": 0 }]]
+    },
+    "Prepare Email Content": {
+      "main": [[{ "node": "Send Email via Brevo", "type": "main", "index": 0 }]]
+    },
+    "Send Email via Brevo": {
+      "main": [[{ "node": "Log to Google Sheets", "type": "main", "index": 0 }]]
+    },
+    "Log to Google Sheets": {
+      "main": [[{ "node": "Telegram Confirmation", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "pinData": {},
+  "active": false,
+  "versionId": "00000000-0000-0000-0000-000000000003",
+  "tags": []
+}
